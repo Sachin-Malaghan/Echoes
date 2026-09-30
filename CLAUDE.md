@@ -22,6 +22,7 @@ Private/Game    Unreal wiring: AECGameMode (no pawn), AECPlayerController (input
                 AECHUD, FECGame (screens, fixed-step loop, loop effects, progress), UECSaveGame
 Private/Render  FECDraw (batched canvas triangles), FECWorldRenderer (world, Subject 7, Echoes, effects)
 Private/UI      FECUI (HUD, menus, touch pads)
+Private/Audio   UECAudioSynth (USynthComponent: every sound and the music synthesised live)
 Private/Tests   automation tests
 Tools/SimHarness  builds Core with plain MSVC and tests it in seconds
 ```
@@ -113,6 +114,25 @@ all fail. Add one for every new level.
   paradox = glitch bars + flicker; solve = flash, the player dissolves into the portal while Echoes keep
   moving in slow motion.
 
+## Audio
+
+All sound is synthesised in `UECAudioSynth` (no audio files): voices with envelope, tone sweep, soft square,
+band-passed noise, vibrato, and a small Schroeder reverb. The game thread calls `IECAudioSink`
+(`Play(EECSound, pan, strength, delay)`, `OnBeat`, `SetMix`); commands cross to the audio thread through a
+lock-free queue, mix targets through atomics.
+
+- **Effects** (`EECSound`): jump, land, footsteps, softer "ghost" jump/land for Echoes, plate chime, door
+  servo + thud, shard sparkle, laser zap / charge warning / continuous hum, clock ticks in the last 3 s,
+  tape-rewind sweep, paradox glitch, death, solve chord, out-of-loops, stars, menu clicks.
+  Silent in attract mode (only the music plays behind the title).
+- **Music is locked to the loop**: 120 BPM, 20 beats = one 10-second loop = 5 bars (i - VI - III - VII - i).
+  `OnBeat(tick / 25)` is called from the sim clock, so every loop plays the same bars. The clock tick,
+  bar pulse and drone always play; **each Echo adds one instrument**: 1 bass, 2 arpeggio, 3 bell melody,
+  4 shimmer, 5 hats, 6 pads. The Lab is A minor and glassy; the Factory D minor, lower, with an anvil clank.
+- Settings: MUSIC / SOUND toggles in the pause menu (saved).
+- Test `Echoes.Audio.EverySoundAudibleNoClipping` renders every effect and each music layer offline,
+  checks they are audible and never clip, and writes them to `Saved/AudioPreview/*.wav` to listen to.
+
 ## Controls
 
 Keyboard A/D or arrows, Space/W jump, **R rewind now**, T restart level, Esc/P pause. Gamepad: stick/D-pad,
@@ -141,6 +161,7 @@ Command line: `-ECLevel=N`, `-ECForceTouch`, `-ECCapture [-ECCaptureTag=x]`.
 - [x] M1 Unreal layer — renderer, HUD, touch pads, rewind / paradox / solve effects, menus, save, capture.
 - [ ] M1 on a real Android phone (touch, 60 FPS, aspect).
 - [x] 20 levels: World 1 (10) and World 2 with lasers (10), all proven at par, with shard solutions and cheat checks.
+- [x] Synthesised sound effects and loop-locked layered music; app icon; store listing, privacy site, release guide.
 - [ ] M2 — more levels per world (15 each), rewind SFX, synthesized audio (one music layer per Echo), level select polish.
 - [ ] M3 — World 2 (levers, boxes, lasers), paradox in play, settings (joystick vs buttons, repositionable pads).
 - [ ] M4 — ads/IAP behind interfaces, analytics, store assets, trailer, Play release.

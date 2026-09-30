@@ -7,6 +7,7 @@
 #include "ECPlayerController.generated.h"
 
 class UECSaveGame;
+class UECAudioSynth;
 
 UCLASS()
 class AECPlayerController : public APlayerController
@@ -30,6 +31,7 @@ public:
 	TUniquePtr<FECGame> Game;
 
 	UPROPERTY() TObjectPtr<UECSaveGame> Save;
+	UPROPERTY() TObjectPtr<UECAudioSynth> Audio;
 
 	// Read by the HUD.
 	bool bTouchLeft = false, bTouchRight = false, bTouchJump = false;

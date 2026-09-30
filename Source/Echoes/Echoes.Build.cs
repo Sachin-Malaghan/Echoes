@@ -14,6 +14,7 @@ public class Echoes : ModuleRules
 			"SlateCore",
 			"Slate",
 			"RenderCore",
+			"AudioMixer",
 			"ApplicationCore"
 		});
 

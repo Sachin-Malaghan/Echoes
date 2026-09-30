@@ -116,6 +116,11 @@ Set-Content (Join-Path $appicon 'Contents.json') -Encoding ascii -Value @'
 Set-Content (Join-Path $root 'Build\IOS\Resources\Assets.xcassets\Contents.json') -Encoding ascii -Value '{ "info" : { "author" : "xcode", "version" : 1 } }'
 Save $icon 1024 (Join-Path $root 'Build\IOS\Resources\Graphics\Icon1024.png')
 
+# Website
+Save $icon 512 (Join-Path $root 'Website/assets/icon-512.png')
+Save $icon 180 (Join-Path $root 'Website/assets/apple-touch-icon.png')
+Save $icon 32 (Join-Path $root 'Website/assets/favicon-32.png')
+
 # Full-size master for store listings / website later
 Save $icon 1024 (Join-Path $root 'Build\Icon\echoes-icon-1024.png')
 $icon.Dispose()

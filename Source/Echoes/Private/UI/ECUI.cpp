@@ -267,14 +267,16 @@ namespace
 		void Paused()
 		{
 			Darken(0.6);
-			Text(TEXT("PAUSED"), W * 0.5, H * 0.22, H * 0.075, ECColor(Ink), 0.5, (int32)(H * 0.012), true);
-			const double BW = H * 0.46, BH = H * 0.08;
-			double Y = H * 0.38;
-			Button(TEXT("RESUME"), W * 0.5, Y, BW, BH, EECAction::Resume, 0, true, true); Y += BH * 1.28;
-			Button(TEXT("RESTART LEVEL"), W * 0.5, Y, BW, BH, EECAction::Restart); Y += BH * 1.28;
-			Button(TEXT("LEVELS"), W * 0.5, Y, BW, BH, EECAction::Levels); Y += BH * 1.28;
+			Text(TEXT("PAUSED"), W * 0.5, H * 0.16, H * 0.07, ECColor(Ink), 0.5, (int32)(H * 0.012), true);
+			const double BW = H * 0.46, BH = H * 0.068, Step = BH * 1.25;
+			double Y = H * 0.28;
+			Button(TEXT("RESUME"), W * 0.5, Y, BW, BH, EECAction::Resume, 0, true, true); Y += Step;
+			Button(TEXT("RESTART LEVEL"), W * 0.5, Y, BW, BH, EECAction::Restart); Y += Step;
+			Button(TEXT("LEVELS"), W * 0.5, Y, BW, BH, EECAction::Levels); Y += Step;
+			Button(G.Save->bMusic ? TEXT("MUSIC: ON") : TEXT("MUSIC: OFF"), W * 0.5, Y, BW, BH, EECAction::ToggleMusic); Y += Step;
+			Button(G.Save->bSound ? TEXT("SOUND: ON") : TEXT("SOUND: OFF"), W * 0.5, Y, BW, BH, EECAction::ToggleSound); Y += Step;
 			static const TCHAR* TouchNames[] = { TEXT("TOUCH PADS: AUTO"), TEXT("TOUCH PADS: ON"), TEXT("TOUCH PADS: OFF") };
-			Button(TouchNames[(int32)G.Save->TouchMode % 3], W * 0.5, Y, BW, BH, EECAction::CycleTouch); Y += BH * 1.28;
+			Button(TouchNames[(int32)G.Save->TouchMode % 3], W * 0.5, Y, BW, BH, EECAction::CycleTouch); Y += Step;
 			Button(TEXT("TITLE"), W * 0.5, Y, BW, BH, EECAction::ToTitle);
 		}
 
@@ -538,7 +540,7 @@ void FECUI::Draw(FECDraw& D, UCanvas* Canvas, FECGame& Game, const FECUiContext&
 			if (Ctx.bShowTouch && Game.Fx != EECFx::OutOfLoops) { U.TouchPads(); }
 		}
 		break;
-	case EECScreen::Paused: U.Hud(); Game.Buttons.Reset(); U.Paused(); break;
+	case EECScreen::Paused: U.Paused(); break;
 	case EECScreen::Complete: U.Complete(); break;
 	}
 	D.Flush();

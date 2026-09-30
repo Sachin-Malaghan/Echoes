@@ -13,7 +13,23 @@ enum class EECScreen : uint8 { Title, LevelSelect, Playing, Paused, Complete };
 enum class EECAction : uint8
 {
 	None, Play, Levels, Back, SelectLevel, Resume, Restart, Rewind, Pause, NextLevel, Replay, ToTitle,
-	RetryLoop, CycleTouch, Quit, WorldPrev, WorldNext
+	RetryLoop, CycleTouch, Quit, WorldPrev, WorldNext, ToggleMusic, ToggleSound
+};
+
+enum class EECSound : uint8
+{
+	UiMove, UiSelect, UiBack, Jump, Land, Step, EchoJump, EchoLand, PlateDown, PlateUp, DoorOpen, DoorClose,
+	Shard, Died, Rewind, Restart, Paradox, Solve, OutOfLoops, TimerTick, LaserOn, LaserWarn, Star
+};
+
+// Implemented by the audio synth; the game calls it on the game thread.
+class IECAudioSink
+{
+public:
+	virtual ~IECAudioSink() = default;
+	virtual void Play(EECSound Sound, float Pan, float Strength, float Delay) = 0;
+	virtual void OnBeat(int32 Beat, int32 Layers, int32 World) = 0;   // every 0.5 s of loop time
+	virtual void SetMix(bool bMusic, bool bSound, bool bMenu, float LaserHum) = 0;
 };
 
 // A short full-screen moment between loops; the sim is frozen while one plays.
@@ -53,7 +69,7 @@ public:
 	static constexpr double SolveSeconds = 1.8;
 	static constexpr double RestartSeconds = 0.45;
 
-	void Init(UECSaveGame* InSave);
+	void Init(UECSaveGame* InSave, IECAudioSink* InAudio);
 	void Tick(float DeltaSeconds, const FECControls& Controls, const FECMenuInput& Menu, double ScreenW, double ScreenH);
 
 	void StartLevel(int32 Index);
@@ -115,4 +131,12 @@ private:
 	void HandleMenu(const FECMenuInput& Menu);
 	void Back();
 	void CompleteLevel();
+	void Sound(EECSound S, float Strength = 1.f, float Delay = 0.f);   // game sounds (silent in attract mode)
+	void UiSound(EECSound S);
+
+	IECAudioSink* Audio = nullptr;
+	double StepDistance = 0;
+	float PrevVY = 0;
+	void UiStar(int32 Index) { if (Audio) { Audio->Play(EECSound::Star, 0.f, Index * 0.5f, 0.3f + Index * 0.25f); } }
+	bool bPrevLaserOn = false, bPrevLaserWarn = false;
 };

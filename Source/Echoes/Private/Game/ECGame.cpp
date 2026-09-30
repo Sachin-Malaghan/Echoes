@@ -6,9 +6,10 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogEchoesGame, Log, All);
 
-void FECGame::Init(UECSaveGame* InSave)
+void FECGame::Init(UECSaveGame* InSave, IECAudioSink* InAudio)
 {
 	Save = InSave;
+	Audio = InAudio;
 	if (Save->Stars.Num() < NumLevels()) { Save->Stars.SetNumZeroed(NumLevels()); }
 	if (Save->BestLoops.Num() < NumLevels()) { Save->BestLoops.SetNumZeroed(NumLevels()); }
 	Save->UnlockedLevels = FMath::Clamp(Save->UnlockedLevels, 1, NumLevels());
@@ -64,6 +65,18 @@ void FECGame::OnLoopReset()
 	Pilot.BeginLoop(Sim.NumEchoes);
 }
 
+void FECGame::Sound(EECSound S, float Strength, float Delay)
+{
+	if (!Audio || bAttract) { return; }
+	const float W = (float)FMath::Max(1, Sim.Level.W);
+	Audio->Play(S, Sim.Player.X / W * 2.f - 1.f, Strength, Delay);
+}
+
+void FECGame::UiSound(EECSound S)
+{
+	if (Audio) { Audio->Play(S, 0.f, 1.f, 0.f); }
+}
+
 void FECGame::GoTo(EECScreen NewScreen)
 {
 	Screen = NewScreen;
@@ -107,6 +120,13 @@ void FECGame::Tick(float DeltaSeconds, const FECControls& Controls, const FECMen
 	Flash = FMath::Max(0.0, Flash - Dt * 2.5);
 	DoorShake = FMath::Max(0.0, DoorShake - Dt * 6.0);
 	for (double& F : PlateFlash) { F = FMath::Max(0.0, F - Dt * 2.0); }
+
+	if (Audio && Save)
+	{
+		const bool bMenu = Screen != EECScreen::Playing || bAttract;
+		const bool bHum = Sim.Level.NumEmitters > 0 && Sim.LaserOn() && Fx == EECFx::None && (Screen == EECScreen::Playing || Screen == EECScreen::Title);
+		Audio->SetMix(Save->bMusic, Save->bSound, bMenu, bHum ? (bAttract ? 0.4f : 1.f) : 0.f);
+	}
 }
 
 void FECGame::StepWorld(double Dt, const FECControls& Controls)
@@ -165,6 +185,33 @@ void FECGame::StepWorld(double Dt, const FECControls& Controls)
 		if (Ev & EC::EV_DoorOpen) { DoorShake = 1.0; Shake = FMath::Max(Shake, 0.6); }
 		if (Ev & EC::EV_Shard) { Flash = FMath::Max(Flash, 0.35); }
 
+		// Sound: events of this tick, footsteps, the laser clock, the last three seconds, the music beat.
+		if (Ev & EC::EV_Jump) { Sound(EECSound::Jump); }
+		if (Ev & EC::EV_Land) { Sound(EECSound::Land, FMath::Clamp(-PrevVY / 20.f, 0.f, 1.f)); }
+		if (Ev & EC::EV_EchoJump) { Sound(EECSound::EchoJump); }
+		if (Ev & EC::EV_EchoLand) { Sound(EECSound::EchoLand); }
+		if (Ev & EC::EV_PlateDown) { Sound(EECSound::PlateDown); }
+		if (Ev & EC::EV_PlateUp) { Sound(EECSound::PlateUp); }
+		if (Ev & EC::EV_DoorOpen) { Sound(EECSound::DoorOpen); }
+		if (Ev & EC::EV_DoorClose) { Sound(EECSound::DoorClose); }
+		if (Ev & EC::EV_Shard) { Sound(EECSound::Shard); }
+		PrevVY = Sim.Player.VY;
+		if (Sim.Player.Grounded && FMath::Abs(Sim.Player.VX) > 1.f)
+		{
+			StepDistance += FMath::Abs(Sim.Player.X - PrevPX);
+			if (StepDistance > 0.85) { StepDistance = 0; Sound(EECSound::Step); }
+		}
+		if (Sim.Level.NumEmitters > 0)
+		{
+			const bool bOn = Sim.LaserOnAt(T), bWarn = Sim.LaserWarning();
+			if (bOn && !bPrevLaserOn) { Sound(EECSound::LaserOn); }
+			if (bWarn && !bPrevLaserWarn) { Sound(EECSound::LaserWarn); }
+			bPrevLaserOn = bOn;
+			bPrevLaserWarn = bWarn;
+		}
+		if (Sim.Phase == EC::EPhase::Playing && (T == 350 || T == 400 || T == 450)) { Sound(EECSound::TimerTick, T == 450 ? 1.f : 0.f); }
+		if (Audio && T % 25 == 0 && Sim.Phase == EC::EPhase::Playing) { Audio->OnBeat(T / 25, Sim.NumEchoes, EC::GetLevelDef(LevelIndex).World); }
+
 		switch (Sim.Phase)
 		{
 		case EC::EPhase::LoopEnded: BeginFx(EECFx::Rewind); break;
@@ -182,6 +229,8 @@ void FECGame::BeginFx(EECFx NewFx)
 {
 	Fx = NewFx;
 	FxTime = 0;
+	static const EECSound FxSounds[] = { EECSound::UiMove, EECSound::Rewind, EECSound::Died, EECSound::Paradox, EECSound::OutOfLoops, EECSound::Solve, EECSound::Restart };
+	if (NewFx != EECFx::None) { Sound(FxSounds[(int32)NewFx]); }
 	if (NewFx == EECFx::Paradox) { Shake = 2.5; }
 	if (NewFx == EECFx::Death) { Shake = 1.6; }
 	if (NewFx == EECFx::Solve) { Flash = 1.0; }
@@ -270,6 +319,10 @@ void FECGame::CompleteLevel()
 	Save->LastLevel = FMath::Min(LevelIndex + 1, NumLevels() - 1);
 	SaveProgress();
 	GoTo(EECScreen::Complete);
+	for (int32 S = 0; S < 3; ++S)
+	{
+		if (ResultStars & (1 << S)) { UiStar(S); }
+	}
 }
 
 void FECGame::Back()
@@ -294,6 +347,10 @@ void FECGame::Back()
 void FECGame::Activate(const FECButton& B)
 {
 	if (!B.bEnabled) { return; }
+	if (B.Action != EECAction::Rewind && B.Action != EECAction::Restart && B.Action != EECAction::Pause)
+	{
+		UiSound(B.Action == EECAction::Back ? EECSound::UiBack : EECSound::UiSelect);
+	}
 	switch (B.Action)
 	{
 	case EECAction::Play: StartLevel(FMath::Clamp(Save->LastLevel, 0, Save->UnlockedLevels - 1)); break;
@@ -339,6 +396,8 @@ void FECGame::Activate(const FECButton& B)
 		SaveProgress();
 		break;
 	case EECAction::Quit: SaveProgress(); bQuitRequested = true; break;
+	case EECAction::ToggleMusic: Save->bMusic = !Save->bMusic; SaveProgress(); break;
+	case EECAction::ToggleSound: Save->bSound = !Save->bSound; SaveProgress(); break;
 	default: break;
 	}
 }
@@ -362,7 +421,7 @@ void FECGame::HandleMenu(const FECMenuInput& Menu)
 			if (Buttons[I].bEnabled && Buttons[I].Box.IsInside(Menu.Pointer)) { Hover = I; break; }
 		}
 	}
-	if (Menu.bPointerMoved && Hover >= 0) { Focus = Hover; }
+	if (Menu.bPointerMoved && Hover >= 0 && Hover != Focus) { Focus = Hover; UiSound(EECSound::UiMove); }
 	if (Menu.bClick && Hover >= 0)
 	{
 		const FECButton B = Buttons[Hover];
@@ -380,6 +439,7 @@ void FECGame::HandleMenu(const FECMenuInput& Menu)
 			Focus = (Focus + Delta + N) % N;
 			if (Buttons[Focus].bEnabled) { break; }
 		}
+		UiSound(EECSound::UiMove);
 	};
 	if (Menu.Up || Menu.Left) { Move(-1); }
 	if (Menu.Down || Menu.Right) { Move(1); }

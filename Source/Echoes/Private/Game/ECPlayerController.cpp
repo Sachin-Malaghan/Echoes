@@ -1,6 +1,7 @@
 // ECHOES: input, lifecycle, console commands and the capture script. (CLAUDE.md: Game flow / Input)
 #include "Game/ECPlayerController.h"
 
+#include "Audio/ECAudioSynth.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "Game/ECSaveGame.h"
@@ -112,6 +113,8 @@ namespace
 		{ ESetup::Level, 14, false, EWait::Tick, 2, 180, EECFx::None, 0, TEXT("54_walkway") },
 		{ ESetup::Level, 15, false, EWait::Tick, 3, 110, EECFx::None, 0, TEXT("55_assembly") },
 		{ ESetup::Level, 19, false, EWait::Tick, 3, 125, EECFx::None, 0, TEXT("56_core") },
+		{ ESetup::Level, 15, true, EWait::Tick, 3, 110, EECFx::None, 0, TEXT("57_assembly_clean") },
+		{ ESetup::Level, 19, true, EWait::Tick, 3, 125, EECFx::None, 0, TEXT("58_core_clean") },
 		{ ESetup::Paradox, 0, false, EWait::Fx, 0, 0, EECFx::Paradox, 0.3, TEXT("40_paradox") },
 		{ ESetup::OutOfLoops, 0, false, EWait::Time, 0, 0, EECFx::None, 0.8, TEXT("41_out_of_loops") },
 	};
@@ -122,6 +125,8 @@ AECPlayerController::AECPlayerController()
 {
 	bShowMouseCursor = true;
 	PrimaryActorTick.bTickEvenWhenPaused = true;
+	Audio = CreateDefaultSubobject<UECAudioSynth>(TEXT("Synth"));
+	Audio->SetupAttachment(RootComponent);
 }
 
 void AECPlayerController::BeginPlay()
@@ -133,7 +138,8 @@ void AECPlayerController::BeginPlay()
 
 	Save = Cast<UECSaveGame>(UGameplayStatics::LoadGameFromSlot(UECSaveGame::SlotName, 0));
 	if (!Save) { Save = Cast<UECSaveGame>(UGameplayStatics::CreateSaveGameObject(UECSaveGame::StaticClass())); }
-	Game->Init(Save);
+	if (Audio) { Audio->Start(); }
+	Game->Init(Save, Audio);
 
 	// Nothing in the 3D world is drawn; the HUD paints everything.
 	if (UGameViewportClient* VC = GetWorld()->GetGameViewport()) { VC->bDisableWorldRendering = true; }
