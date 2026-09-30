@@ -1,0 +1,20 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "",
+  "Description": "ECHOES - a 2D puzzle platformer where every level is a 10-second time loop and your past runs replay as Echoes.",
+  "DisableEnginePluginsByDefault": true,
+  "Modules": [
+    { "Name": "Echoes", "Type": "Runtime", "LoadingPhase": "Default" }
+  ],
+  "Plugins": [
+    { "Name": "EnhancedInput", "Enabled": true },
+    { "Name": "XInputDevice", "Enabled": true, "PlatformAllowList": [ "Win64" ] },
+    { "Name": "WindowsDeviceProfileSelector", "Enabled": true, "PlatformAllowList": [ "Win64" ] },
+    { "Name": "AndroidDeviceProfileSelector", "Enabled": true, "Optional": true, "PlatformAllowList": [ "Android" ] },
+    { "Name": "AndroidPermission", "Enabled": true, "Optional": true, "PlatformAllowList": [ "Android" ] },
+    { "Name": "ContentBrowserAssetDataSource", "Enabled": true, "TargetAllowList": [ "Editor" ] },
+    { "Name": "PluginBrowser", "Enabled": true, "Optional": true, "TargetAllowList": [ "Editor" ] }
+  ],
+  "TargetPlatforms": [ "Windows", "Android", "IOS" ]
+}
