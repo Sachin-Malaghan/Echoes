@@ -13,7 +13,7 @@ enum class EECScreen : uint8 { Title, LevelSelect, Playing, Paused, Complete };
 enum class EECAction : uint8
 {
 	None, Play, Levels, Back, SelectLevel, Resume, Restart, Rewind, Pause, NextLevel, Replay, ToTitle,
-	RetryLoop, CycleTouch, Quit, WorldPrev, WorldNext, ToggleMusic, ToggleSound
+	RetryLoop, CycleTouch, Quit, WorldPrev, WorldNext, ToggleMusic, ToggleSound, Hint, Skip
 };
 
 enum class EECSound : uint8
@@ -50,6 +50,15 @@ struct FECMenuInput
 	bool bPointerValid = false, bPointerMoved = false;
 	bool bClick = false;    // mouse click or tap released this frame
 	FVector2D Pointer = FVector2D::ZeroVector;
+};
+
+// A purely visual particle (dust, sparks, shards of light). World units; never affects the sim.
+struct FECParticle
+{
+	float X = 0, Y = 0, VX = 0, VY = 0;
+	float Life = 0, MaxLife = 1, Size = 0.05f, Gravity = 0, Drag = 0;
+	uint32 Color = 0xFFFFFF;
+	bool bGlow = false;      // additive (drawn over the lighting) instead of soft dust
 };
 
 struct FECButton
@@ -104,6 +113,26 @@ public:
 	float DoorHistory[EC::LoopTicks][EC::MaxDoors] = {};
 	uint8 PlateHistory[EC::LoopTicks] = {};
 
+	// Juice: particles (visual only)
+	static constexpr int32 MaxParticles = 320;
+	FECParticle Particles[MaxParticles];
+	int32 NumParticles = 0;
+	void Burst(int32 Count, float X, float Y, float Speed, float Up, float Life, float Size, uint32 Color, bool bGlow, float Gravity = 0.f, float SpreadX = 0.2f);
+
+	// Speedrun clock: seconds of the current attempt (from the last full restart of the level).
+	double RunTime = 0;
+	float ResultTime = 0;
+	bool bNewBestTime = false;
+	static FString FormatTime(double Seconds);
+	double WorldTotalTime(int32 World, bool& bOutComplete) const;
+
+	// Help for stuck players: after a few failures a hint ghost shows the next run of the par solution.
+	int32 FailCount = 0;
+	bool bHintActive = false, bHintEndsWithRewind = false;
+	EC::FRecording HintTrack;
+	bool HintAvailable() const { return FailCount >= 2 || LevelTime > 60.0 || bHintActive; }
+	bool SkipAvailable() const { return (FailCount >= 4 || bHintActive || LevelTime > 120.0) && LevelIndex < EC::NumLevels() - 1; }
+
 	// Result card
 	int32 ResultLoops = 0;
 	uint8 ResultStars = 0, NewStars = 0;
@@ -133,6 +162,9 @@ private:
 	void CompleteLevel();
 	void Sound(EECSound S, float Strength = 1.f, float Delay = 0.f);   // game sounds (silent in attract mode)
 	void UiSound(EECSound S);
+	void BuildHint();
+	void UpdateParticles(double Dt);
+	TUniquePtr<EC::FSim> HintSim;
 
 	IECAudioSink* Audio = nullptr;
 	double StepDistance = 0;

@@ -114,6 +114,34 @@ all fail. Add one for every new level.
   paradox = glitch bars + flicker; solve = flash, the player dissolves into the portal while Echoes keep
   moving in slow motion.
 
+## Game feel, atmosphere, and keeping players going (2026-10-05, user request)
+
+All of this is presentation in the Game / Render / UI layers; the deterministic core is untouched.
+
+- **Particles** (`FECGame::Burst`, `FECParticle`, 320 max, visual only): dust on jump, landing (more on a
+  hard landing) and while running; teal sparks on a plate; a shard burst; dark body shards + red sparks on
+  death; warm sparks from the portal on solve. Dust is drawn under the lighting, glowing sparks over it.
+- **Screen shake**: death, paradox, a door opening, and a hard landing (fall speed over 14 tiles/s).
+- **Squash, stretch, lean**: the figure stretches with vertical speed, squashes on landing, leans into a
+  run and with its drift in the air (`DrawCharacter`; Echoes get the same from their recorded velocity).
+- **Parallax**: the level is one fixed screen, so the depth is in the background: far structure (columns,
+  beams, cables) 0.16, monitors / gears / steam 0.09, the dial 0.06, wall seams 0.03 of the offset of the
+  player from the centre, smoothed so a rewind does not snap.
+- **Mist**: slow additive fog banks along the floor and a few higher up.
+- **Lighting** (`DrawLighting`): a half-tile mesh over the screen darkened by how little light reaches each
+  vertex. Subject 7 carries the strongest light; Echoes, exit, shard, lamps, plates, doors, lasers, spikes
+  and the hint ghost are lights too, so nothing a puzzle needs is ever hidden. Ambient 0.30 in play.
+- **Speedrun clock**: `RunTime` runs for the current attempt (reset by a full level restart), shown on the
+  HUD as m:ss.mmm with the best time; best times are saved per level (`UECSaveGame::BestTimes`); the level
+  select shows each best and the summed world time.
+- **Level select**: every card shows a silhouette of its level (`FUi::LevelPreview`); locked ones in shadow.
+- **Hint** (`EECAction::Hint`): offered after 2 failures or 60 s (the `?` button, the pause menu, the
+  out-of-loops panel). It restarts the level and a pale ghost walks the next run of the par `Plan` along a
+  dotted path, with a rewind mark where that run rewinds. `BuildHint` replays the plan in a private sim.
+- **Skip** (`EECAction::Skip`, pause menu): unlocks after 4 failures, a used hint, or 2 minutes, so one hard
+  level never ends the session. Difficulty still ramps 2-loop to 4-loop puzzles in each world with an
+  easier "breather" after each hard one (1-6, 1-7, 2-7).
+
 ## Audio
 
 All sound is synthesised in `UECAudioSynth` (no audio files): voices with envelope, tone sweep, soft square,

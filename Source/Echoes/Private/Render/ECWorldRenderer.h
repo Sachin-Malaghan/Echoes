@@ -50,4 +50,15 @@ private:
 	void DrawShard(FECDraw& D, const FECGame& G, double Time);
 	void DrawActors(FECDraw& D, const FECGame& G, double Time);
 	void DrawOverlays(FECDraw& D, const FECGame& G, double Time);
+	void DrawMist(FECDraw& D, const FECGame& G, double Time);
+	void DrawParticles(FECDraw& D, const FECGame& G, bool bGlow);
+	void DrawHint(FECDraw& D, const FECGame& G, double Time);
+	void DrawLighting(FECDraw& D, const FECGame& G, const FECViewTransform& V, double Time);
+
+	// Parallax: the background layers trail the player, smoothed so a rewind does not snap them.
+	double ParallaxX = 0, ParallaxY = 0, LastTime = 0;
+	// Ceiling lamps found while drawing the background (they are light sources for the lighting pass).
+	static constexpr int32 MaxLamps = 16;
+	FVector Lamps[MaxLamps];   // x, y of the lamp, z = y of the floor under it
+	int32 NumLamps = 0;
 };

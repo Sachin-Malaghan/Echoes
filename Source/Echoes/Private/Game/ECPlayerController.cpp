@@ -75,7 +75,7 @@ namespace
 		}));
 
 	// Capture script: each step sets something up, waits for a moment worth seeing, and takes a shot.
-	enum class ESetup : uint8 { None, Title, Levels, Level, Paused, Paradox, OutOfLoops };
+	enum class ESetup : uint8 { None, Title, Levels, Level, Paused, Paradox, OutOfLoops, Hint };
 	enum class EWait : uint8 { Time, Tick, Fx, Complete };
 
 	struct FCaptureShot
@@ -115,6 +115,7 @@ namespace
 		{ ESetup::Level, 19, false, EWait::Tick, 3, 125, EECFx::None, 0, TEXT("56_core") },
 		{ ESetup::Level, 15, true, EWait::Tick, 3, 110, EECFx::None, 0, TEXT("57_assembly_clean") },
 		{ ESetup::Level, 19, true, EWait::Tick, 3, 125, EECFx::None, 0, TEXT("58_core_clean") },
+		{ ESetup::Hint, 7, false, EWait::Tick, 0, 45, EECFx::None, 0, TEXT("60_hint") },
 		{ ESetup::Paradox, 0, false, EWait::Fx, 0, 0, EECFx::Paradox, 0.3, TEXT("40_paradox") },
 		{ ESetup::OutOfLoops, 0, false, EWait::Time, 0, 0, EECFx::None, 0.8, TEXT("41_out_of_loops") },
 	};
@@ -394,6 +395,15 @@ void AECPlayerController::TickCapture(float DeltaTime)
 	case ESetup::Levels: Game->SelectWorld = S.Level + 1; Game->GoTo(EECScreen::LevelSelect); break;
 	case ESetup::Level: Game->bAutopilotInPlay = true; Game->StartLevel(S.Level); break;
 	case ESetup::Paused: Game->GoTo(EECScreen::Paused); break;
+	case ESetup::Hint:
+	{
+		Game->bAutopilotInPlay = false;
+		Game->StartLevel(S.Level);
+		FECButton B;
+		B.Action = EECAction::Hint;
+		Game->Activate(B);
+		break;
+	}
 	case ESetup::Paradox: Game->DebugParadox(); break;
 	case ESetup::OutOfLoops: Game->DebugOutOfLoops(); break;
 	default: break;

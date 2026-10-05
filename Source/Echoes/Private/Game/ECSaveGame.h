@@ -26,6 +26,7 @@ public:
 	UPROPERTY() int32 LastLevel = 0;
 	UPROPERTY() TArray<uint8> Stars;        // per level, bits: 1 solved, 2 at par, 4 shard
 	UPROPERTY() TArray<int32> BestLoops;    // 0 = never solved
+	UPROPERTY() TArray<float> BestTimes;    // seconds of the fastest solve, 0 = never solved
 
 	UPROPERTY() bool bMusic = true;
 	UPROPERTY() bool bSound = true;

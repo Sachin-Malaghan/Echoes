@@ -27,6 +27,8 @@ You are your only teammate.
 • Pressure plates, doors, spikes, towers of Echoes, and pulsing lasers that only an Echo can stop
 • Every level can be solved in a few loops — can you match par?
 • Three stars per level: solve it, solve it at par, find the hidden shard
+• A speedrun clock with your best time on every level
+• Stuck? A ghost shows you the next move - nobody is left behind
 • Up to six Echoes at once, each with its own colour and look
 • A soundtrack locked to the loop: every Echo you record adds an instrument
 • Rewind any time: end a loop early and your Echo holds its pose for good

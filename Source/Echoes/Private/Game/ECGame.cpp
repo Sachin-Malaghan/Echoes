@@ -12,6 +12,7 @@ void FECGame::Init(UECSaveGame* InSave, IECAudioSink* InAudio)
 	Audio = InAudio;
 	if (Save->Stars.Num() < NumLevels()) { Save->Stars.SetNumZeroed(NumLevels()); }
 	if (Save->BestLoops.Num() < NumLevels()) { Save->BestLoops.SetNumZeroed(NumLevels()); }
+	if (Save->BestTimes.Num() < NumLevels()) { Save->BestTimes.SetNumZeroed(NumLevels()); }
 	Save->UnlockedLevels = FMath::Clamp(Save->UnlockedLevels, 1, NumLevels());
 	Save->LastLevel = FMath::Clamp(Save->LastLevel, 0, Save->UnlockedLevels - 1);
 	StartAttract(0);
@@ -33,6 +34,11 @@ void FECGame::LoadLevel(int32 Index)
 	Fx = EECFx::None;
 	Shake = Flash = DoorShake = 0;
 	for (double& F : PlateFlash) { F = 0; }
+	NumParticles = 0;
+	RunTime = 0;
+	FailCount = 0;
+	bHintActive = false;
+	HintTrack.Length = 0;
 	OnLoopReset();
 }
 
@@ -63,6 +69,89 @@ void FECGame::OnLoopReset()
 	PrevPX = Sim.Player.X;
 	PrevPY = Sim.Player.Y;
 	Pilot.BeginLoop(Sim.NumEchoes);
+	if (bHintActive) { BuildHint(); }
+}
+
+// Plays the par solution in a private sim up to the run the player is on, and keeps that run as the hint.
+void FECGame::BuildHint()
+{
+	HintTrack.Length = 0;
+	if (!HintSim) { HintSim = MakeUnique<EC::FSim>(); }
+	const EC::FLevelDef& Def = EC::GetLevelDef(LevelIndex);
+	char Err[128];
+	EC::FAutopilot Solver;
+	if (!HintSim->Init(Def, Err, sizeof Err) || !Solver.Load(Def.Plan, Err, sizeof Err)) { return; }
+	const int32 Target = FMath::Min(Sim.NumEchoes, Solver.NumRuns() - 1);
+	for (int32 Guard = 0; Guard <= EC::MaxEchoes; ++Guard)
+	{
+		Solver.BeginLoop(HintSim->NumEchoes);
+		while (HintSim->Phase == EC::EPhase::Playing) { HintSim->Step(Solver.Next(*HintSim)); }
+		if (HintSim->NumEchoes == Target)
+		{
+			HintTrack = HintSim->Current;
+			bHintEndsWithRewind = HintSim->Phase == EC::EPhase::LoopEnded;
+			return;
+		}
+		if (HintSim->Phase != EC::EPhase::LoopEnded) { return; }
+		HintSim->CommitLoop();
+	}
+}
+
+FString FECGame::FormatTime(double Seconds)
+{
+	const int32 Ms = FMath::Max(0, FMath::RoundToInt(Seconds * 1000.0));
+	return FString::Printf(TEXT("%d:%02d.%03d"), Ms / 60000, (Ms / 1000) % 60, Ms % 1000);
+}
+
+double FECGame::WorldTotalTime(int32 World, bool& bOutComplete) const
+{
+	double Sum = 0;
+	bOutComplete = true;
+	for (int32 I = EC::FirstLevelOfWorld(World); I < EC::FirstLevelOfWorld(World + 1); ++I)
+	{
+		const float T = Save && Save->BestTimes.IsValidIndex(I) ? Save->BestTimes[I] : 0.f;
+		if (T <= 0) { bOutComplete = false; }
+		Sum += T;
+	}
+	return Sum;
+}
+
+void FECGame::Burst(int32 Count, float X, float Y, float Speed, float Up, float Life, float Size, uint32 Color, bool bGlow, float Gravity, float SpreadX)
+{
+	for (int32 I = 0; I < Count; ++I)
+	{
+		if (NumParticles == MaxParticles) { Particles[FMath::RandHelper(MaxParticles)] = Particles[--NumParticles]; }
+		FECParticle& P = Particles[NumParticles++];
+		const float A = FMath::FRandRange(0.f, 2.f * PI);
+		const float S = Speed * FMath::FRandRange(0.35f, 1.f);
+		P.X = X + FMath::FRandRange(-SpreadX, SpreadX);
+		P.Y = Y + FMath::FRandRange(0.f, 0.08f);
+		P.VX = FMath::Cos(A) * S;
+		P.VY = FMath::Abs(FMath::Sin(A)) * S * 0.6f + Up * FMath::FRandRange(0.5f, 1.f);
+		P.MaxLife = P.Life = Life * FMath::FRandRange(0.6f, 1.f);
+		P.Size = Size * FMath::FRandRange(0.6f, 1.2f);
+		P.Gravity = Gravity;
+		P.Drag = bGlow ? 1.5f : 3.5f;
+		P.Color = Color;
+		P.bGlow = bGlow;
+	}
+}
+
+void FECGame::UpdateParticles(double Dt)
+{
+	const float D = (float)Dt;
+	for (int32 I = 0; I < NumParticles; )
+	{
+		FECParticle& P = Particles[I];
+		P.Life -= D;
+		if (P.Life <= 0) { P = Particles[--NumParticles]; continue; }
+		P.VY -= P.Gravity * D;
+		P.VX *= FMath::Max(0.f, 1.f - P.Drag * D);
+		P.VY *= FMath::Max(0.f, 1.f - P.Drag * D * 0.5f);
+		P.X += P.VX * D;
+		P.Y += P.VY * D;
+		++I;
+	}
 }
 
 void FECGame::Sound(EECSound S, float Strength, float Delay)
@@ -116,6 +205,8 @@ void FECGame::Tick(float DeltaSeconds, const FECControls& Controls, const FECMen
 	const bool bWorldRuns = Screen == EECScreen::Playing || Screen == EECScreen::Title || Screen == EECScreen::LevelSelect;
 	if (bWorldRuns) { StepWorld(Dt, Controls); }
 
+	UpdateParticles(Dt);
+	if (Screen == EECScreen::Playing && !bAttract && Fx != EECFx::Solve && Sim.Phase != EC::EPhase::Solved) { RunTime += Dt; }
 	Shake = FMath::Max(0.0, Shake - Dt * 10.0);
 	Flash = FMath::Max(0.0, Flash - Dt * 2.5);
 	DoorShake = FMath::Max(0.0, DoorShake - Dt * 6.0);
@@ -195,6 +286,29 @@ void FECGame::StepWorld(double Dt, const FECControls& Controls)
 		if (Ev & EC::EV_DoorOpen) { Sound(EECSound::DoorOpen); }
 		if (Ev & EC::EV_DoorClose) { Sound(EECSound::DoorClose); }
 		if (Ev & EC::EV_Shard) { Sound(EECSound::Shard); }
+		{
+			// Dust and sparks. Visual only, so attract mode gets them too.
+			const float PX = Sim.Player.X, PY = Sim.Player.Y;
+			const uint32 DustC = EC::GetLevelDef(LevelIndex).World == 2 ? 0xC9A58A : 0xA9C4DE;
+			if (Ev & EC::EV_Jump) { Burst(6, PX, PY, 1.6f, 0.3f, 0.35f, 0.07f, DustC, false, 2.f); }
+			if (Ev & EC::EV_Land)
+			{
+				const float Hard = FMath::Clamp(-PrevVY / 20.f, 0.f, 1.f);
+				Burst(5 + (int32)(Hard * 12), PX, PY, 1.5f + 2.5f * Hard, 0.2f, 0.4f + 0.3f * Hard, 0.07f + 0.05f * Hard, DustC, false, 2.f, 0.3f);
+				if (Hard > 0.7f) { Shake = FMath::Max(Shake, 0.5 + Hard * 0.6); }   // a long fall thumps the camera
+			}
+			if (Ev & EC::EV_PlateDown) { Burst(10, PX, PY + 0.1f, 2.2f, 1.2f, 0.5f, 0.035f, 0x2EE6C5, true, 3.f, 0.3f); }
+			if (Ev & EC::EV_Shard) { Burst(26, Sim.Level.Shard.X, Sim.Level.Shard.Y, 3.5f, 0.5f, 0.8f, 0.04f, 0xCFFBFF, true, 2.f, 0.1f); }
+			if (Ev & EC::EV_Died)
+			{
+				Burst(34, PX, PY + 0.8f, 5.f, 1.5f, 0.9f, 0.09f, 0x0A0F1A, false, 9.f, 0.2f);    // dark shards of the body
+				Burst(18, PX, PY + 0.8f, 4.f, 1.f, 0.6f, 0.045f, 0xFF4D5E, true, 4.f, 0.2f);
+			}
+			if (Sim.Player.Grounded && FMath::Abs(Sim.Player.VX) > 4.f && (T % 6) == 0)
+			{
+				Burst(1, PX - (Sim.Player.VX > 0 ? 0.2f : -0.2f), PY, 0.5f, 0.5f, 0.35f, 0.06f, DustC, false, 0.5f, 0.05f);
+			}
+		}
 		PrevVY = Sim.Player.VY;
 		if (Sim.Player.Grounded && FMath::Abs(Sim.Player.VX) > 1.f)
 		{
@@ -231,6 +345,8 @@ void FECGame::BeginFx(EECFx NewFx)
 	FxTime = 0;
 	static const EECSound FxSounds[] = { EECSound::UiMove, EECSound::Rewind, EECSound::Died, EECSound::Paradox, EECSound::OutOfLoops, EECSound::Solve, EECSound::Restart };
 	if (NewFx != EECFx::None) { Sound(FxSounds[(int32)NewFx]); }
+	if (!bAttract && (NewFx == EECFx::Death || NewFx == EECFx::Paradox || NewFx == EECFx::OutOfLoops || NewFx == EECFx::Restart)) { ++FailCount; }
+	if (NewFx == EECFx::Solve) { Burst(40, Sim.Level.Exit.X, Sim.Level.Exit.Y + 1.f, 4.5f, 1.f, 1.2f, 0.05f, 0xFFF4E0, true, 1.f, 0.2f); }
 	if (NewFx == EECFx::Paradox) { Shake = 2.5; }
 	if (NewFx == EECFx::Death) { Shake = 1.6; }
 	if (NewFx == EECFx::Solve) { Flash = 1.0; }
@@ -258,12 +374,9 @@ void FECGame::EndFx()
 		break;
 	case EECFx::Paradox:
 	case EECFx::Restart:
+	case EECFx::OutOfLoops:   // (only the autopilot gets here on its own; players choose on the panel)
 		Sim.RestartLevel();
-		OnLoopReset();
-		break;
-	case EECFx::OutOfLoops:
-		// Only the autopilot gets here on its own; players choose on the panel.
-		Sim.RestartLevel();
+		RunTime = 0;
 		OnLoopReset();
 		break;
 	case EECFx::Solve:
@@ -315,6 +428,10 @@ void FECGame::CompleteLevel()
 	Stars |= ResultStars;
 	int32& Best = Save->BestLoops[LevelIndex];
 	if (Best == 0 || ResultLoops < Best) { Best = ResultLoops; }
+	ResultTime = (float)RunTime;
+	float& BestTime = Save->BestTimes[LevelIndex];
+	bNewBestTime = BestTime <= 0 || ResultTime < BestTime;
+	if (bNewBestTime) { BestTime = ResultTime; }
 	Save->UnlockedLevels = FMath::Clamp(FMath::Max(Save->UnlockedLevels, LevelIndex + 2), 1, NumLevels());
 	Save->LastLevel = FMath::Min(LevelIndex + 1, NumLevels() - 1);
 	SaveProgress();
@@ -369,7 +486,7 @@ void FECGame::Activate(const FECButton& B)
 	case EECAction::Resume: GoTo(EECScreen::Playing); break;
 	case EECAction::Restart:
 		if (Screen == EECScreen::Paused) { GoTo(EECScreen::Playing); }
-		if (Fx == EECFx::OutOfLoops) { Fx = EECFx::None; Sim.RestartLevel(); OnLoopReset(); }
+		if (Fx == EECFx::OutOfLoops) { Fx = EECFx::None; Sim.RestartLevel(); RunTime = 0; OnLoopReset(); }
 		else if (Fx == EECFx::None) { BeginFx(EECFx::Restart); }
 		break;
 	case EECAction::RetryLoop:
@@ -396,6 +513,21 @@ void FECGame::Activate(const FECButton& B)
 		SaveProgress();
 		break;
 	case EECAction::Quit: SaveProgress(); bQuitRequested = true; break;
+	case EECAction::Hint:
+		// The walkthrough starts from loop 1, so the plan of the ghost matches the Echoes on screen.
+		bHintActive = true;
+		if (Screen == EECScreen::Paused) { GoTo(EECScreen::Playing); }
+		if (Fx == EECFx::OutOfLoops) { Fx = EECFx::None; Sim.RestartLevel(); RunTime = 0; OnLoopReset(); }
+		else if (Sim.NumEchoes > 0 && Fx == EECFx::None) { BeginFx(EECFx::Restart); --FailCount; }
+		else { BuildHint(); }
+		break;
+	case EECAction::Skip:
+		if (SkipAvailable())
+		{
+			Save->UnlockedLevels = FMath::Clamp(FMath::Max(Save->UnlockedLevels, LevelIndex + 2), 1, NumLevels());
+			StartLevel(LevelIndex + 1);
+		}
+		break;
 	case EECAction::ToggleMusic: Save->bMusic = !Save->bMusic; SaveProgress(); break;
 	case EECAction::ToggleSound: Save->bSound = !Save->bSound; SaveProgress(); break;
 	default: break;

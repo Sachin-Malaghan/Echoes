@@ -150,6 +150,50 @@ namespace
 			D.Tri(CX, CY - S * 0.55, CX - S * 0.5, CY + S * 0.05, CX + S * 0.5, CY + S * 0.05, C);
 			D.Rect(CX - S * 0.16, CY + S * 0.05, CX + S * 0.16, CY + S * 0.5, C);
 		}
+		// A tiny silhouette of a level: open space lit in the world colour, hazards and the exit marked.
+		void LevelPreview(int32 Index, double X0, double Y0, double PW, double PH, const FLinearColor& WA, double Alpha)
+		{
+			static TArray<EC::FLevel> Cache;
+			if (Cache.Num() != EC::NumLevels())
+			{
+				Cache.SetNum(EC::NumLevels());
+				char Err[128];
+				for (int32 I = 0; I < Cache.Num(); ++I) { Cache[I].Parse(EC::GetLevelDef(I), Err, sizeof Err); }
+			}
+			const EC::FLevel& L = Cache[Index];
+			if (L.W <= 0 || L.H <= 0) { return; }
+			const double T = FMath::Min(PW / L.W, PH / L.H);
+			const double OX = X0 + (PW - L.W * T) * 0.5, OY = Y0 + (PH - L.H * T) * 0.5;
+			D.Rect(OX, OY, OX + L.W * T, OY + L.H * T, ECColor(0x05090F, 0.9f * (float)Alpha));
+			for (int32 Y = 0; Y < L.H; ++Y)
+				for (int32 X = 0; X < L.W; ++X)
+				{
+					const EC::ETile Tile = L.TileAt(X, Y);
+					if (Tile == EC::ETile::Solid) { continue; }
+					const double PX = OX + X * T, PY = OY + (L.H - 1 - Y) * T;
+					D.Rect(PX, PY, PX + T + 0.5, PY + T + 0.5, ECAlpha(WA, 0.2 * Alpha));
+					if (Tile == EC::ETile::Spike) { D.Tri(PX, PY + T, PX + T, PY + T, PX + T * 0.5, PY + T * 0.3, ECColor(Danger, (float)Alpha)); }
+				}
+			for (int32 I = 0; I < L.NumDoors; ++I)
+			{
+				const EC::FDoor& Dr = L.Doors[I];
+				D.Rect(OX + (Dr.X0 + 0.3) * T, OY + (L.H - Dr.Y1) * T, OX + (Dr.X1 - 0.3) * T, OY + (L.H - Dr.Y0) * T, ECAlpha(FECWorldRenderer::ChannelColor(Dr.Channel), Alpha));
+			}
+			for (int32 I = 0; I < L.NumPlates; ++I)
+			{
+				const EC::FPlate& Pl = L.Plates[I];
+				D.Rect(OX + Pl.X0 * T, OY + (L.H - Pl.Y) * T - T * 0.3, OX + Pl.X1 * T, OY + (L.H - Pl.Y) * T, ECAlpha(FECWorldRenderer::ChannelColor(Pl.Channel), Alpha));
+			}
+			for (int32 I = 0; I < L.NumEmitters; ++I)
+			{
+				const EC::FEmitter& E = L.Emitters[I];
+				const double EX = OX + (E.X + 0.5) * T, EY = OY + (L.H - E.Y - 0.5) * T;
+				D.Line(EX, EY, EX + E.DX * T * 3.0, EY - E.DY * T * 3.0, FMath::Max(1.0, T * 0.2), ECColor(0xFF2E63, 0.8f * (float)Alpha));
+			}
+			D.Rect(OX + (L.Exit.X - 0.3) * T, OY + (L.H - L.Exit.Y - 2.0) * T, OX + (L.Exit.X + 0.3) * T, OY + (L.H - L.Exit.Y) * T, ECColor(Warm, (float)Alpha));
+			D.Circle(OX + L.Spawn.X * T, OY + (L.H - L.Spawn.Y - 0.8) * T, T * 0.45, ECColor(Accent, (float)Alpha), 8);
+		}
+
 		void IconLock(double CX, double CY, double S, const FLinearColor& C)
 		{
 			D.Rect(CX - S * 0.4, CY - S * 0.05, CX + S * 0.4, CY + S * 0.5, C);
@@ -195,13 +239,21 @@ namespace
 			const int32 World = FMath::Clamp(G.SelectWorld, 1, EC::NumWorlds());
 			const FLinearColor WA = ECColor(WorldAccent[(World - 1) % 4]);
 			Text(FString::Printf(TEXT("WORLD %d"), World), W * 0.5, H * 0.1, H * 0.028, WA, 0.5, (int32)(H * 0.008), true);
-			Text(FString(EC::WorldName(World)).ToUpper(), W * 0.5, H * 0.17, H * 0.07, ECColor(Ink), 0.5, (int32)(H * 0.012), true);
+			Text(FString(EC::WorldName(World)).ToUpper(), W * 0.5, H * 0.155, H * 0.065, ECColor(Ink), 0.5, (int32)(H * 0.012), true);
+			{
+				bool bAll = false;
+				const double Total = G.WorldTotalTime(World, bAll);
+				if (Total > 0)
+				{
+					Text(FString::Printf(TEXT("%s  %s"), bAll ? TEXT("WORLD TIME") : TEXT("TIME SO FAR"), *FECGame::FormatTime(Total)), W * 0.5, H * 0.215, H * 0.02, bAll ? WA : ECColor(Dim), 0.5, 2, true);
+				}
+			}
 
 			const int32 First = EC::FirstLevelOfWorld(World), Last = EC::FirstLevelOfWorld(World + 1);
 			const int32 Cols = 5;
-			const double CW = H * 0.2, CH = H * 0.22, Gap = H * 0.03;
+			const double CW = H * 0.21, CH = H * 0.255, Gap = H * 0.022;
 			const double X0 = W * 0.5 - (Cols * CW + (Cols - 1) * Gap) * 0.5;
-			const double Y0 = H * 0.27;
+			const double Y0 = H * 0.245;
 			for (int32 I = First; I < Last; ++I)
 			{
 				const EC::FLevelDef& Def = EC::GetLevelDef(I);
@@ -218,9 +270,11 @@ namespace
 				const bool bFocus = G.Focus == Index;
 				D.Rect(CX - CW * 0.5 - 2, CY - CH * 0.5 - 2, CX + CW * 0.5 + 2, CY + CH * 0.5 + 2, bFocus && bOpen ? WA : ECColor(GlassEdge, bOpen ? 1.f : 0.4f));
 				D.RectV(CX - CW * 0.5, CY - CH * 0.5, CX + CW * 0.5, CY + CH * 0.5, ECColor(0x12233D, 0.95f), ECColor(Glass, 0.95f));
+				// The silhouette of the level fills the top of the card; locked chapters stay in shadow.
+				LevelPreview(I, CX - CW * 0.44, CY - CH * 0.45, CW * 0.88, CH * 0.5, WA, bOpen ? 1.0 : 0.3);
 				if (!bOpen)
 				{
-					IconLock(CX, CY - CH * 0.05, CH * 0.2, ECColor(Faint));
+					IconLock(CX, CY + CH * 0.25, CH * 0.13, ECColor(Faint));
 					continue;
 				}
 				if (bFocus)
@@ -229,13 +283,14 @@ namespace
 					D.Glow(CX, CY, CW * 0.75, ECAlpha(WA, 0.14), ECAlpha(WA, 0.0), 24);
 					D.Translucent();
 				}
-				Text(FString::Printf(TEXT("%d-%d"), World, K + 1), CX, CY - CH * 0.25, CH * 0.2, WA, 0.5, 2, true);
-				Text(FString(Def.Name).ToUpper(), CX, CY + CH * 0.02, CH * 0.085, ECColor(Ink), 0.5, 1, true);
+				Text(FString::Printf(TEXT("%d-%d  %s"), World, K + 1, *FString(Def.Name).ToUpper()), CX, CY + CH * 0.15, CH * 0.068, ECColor(Ink), 0.5, 1, true);
+				const float BestT = G.Save->BestTimes.IsValidIndex(I) ? G.Save->BestTimes[I] : 0.f;
+				if (BestT > 0) { Text(FECGame::FormatTime(BestT), CX, CY + CH * 0.4, CH * 0.06, ECColor(Dim), 0.5, 1); }
 				const uint8 Stars = G.Save->Stars.IsValidIndex(I) ? G.Save->Stars[I] : 0;
 				for (int32 S = 0; S < 3; ++S)
 				{
 					const bool bGot = (Stars & (1 << S)) != 0;
-					Star(CX + (S - 1) * CH * 0.2, CY + CH * 0.28, CH * 0.08, bGot ? ECColor(0xFFD166) : ECColor(Faint, 0.6f));
+					Star(CX + (S - 1) * CH * 0.17, CY + CH * 0.28, CH * 0.062, bGot ? ECColor(0xFFD166) : ECColor(Faint, 0.6f));
 				}
 			}
 
@@ -259,25 +314,33 @@ namespace
 			for (int32 Wd = 1; Wd <= EC::NumWorlds(); ++Wd)
 			{
 				const double DX = W * 0.5 + (Wd - (EC::NumWorlds() + 1) * 0.5) * H * 0.035;
-				D.Circle(DX, H * 0.8, H * 0.008, Wd == World ? WA : ECColor(Faint), 12);
+				D.Circle(DX, H * 0.825, H * 0.008, Wd == World ? WA : ECColor(Faint), 12);
 			}
-			Button(TEXT("BACK"), W * 0.5, H * 0.88, H * 0.3, H * 0.07, EECAction::Back);
+			Button(TEXT("BACK"), W * 0.5, H * 0.9, H * 0.3, H * 0.065, EECAction::Back);
 		}
 
 		void Paused()
 		{
 			Darken(0.6);
 			Text(TEXT("PAUSED"), W * 0.5, H * 0.16, H * 0.07, ECColor(Ink), 0.5, (int32)(H * 0.012), true);
-			const double BW = H * 0.46, BH = H * 0.068, Step = BH * 1.25;
-			double Y = H * 0.28;
-			Button(TEXT("RESUME"), W * 0.5, Y, BW, BH, EECAction::Resume, 0, true, true); Y += Step;
-			Button(TEXT("RESTART LEVEL"), W * 0.5, Y, BW, BH, EECAction::Restart); Y += Step;
-			Button(TEXT("LEVELS"), W * 0.5, Y, BW, BH, EECAction::Levels); Y += Step;
-			Button(G.Save->bMusic ? TEXT("MUSIC: ON") : TEXT("MUSIC: OFF"), W * 0.5, Y, BW, BH, EECAction::ToggleMusic); Y += Step;
-			Button(G.Save->bSound ? TEXT("SOUND: ON") : TEXT("SOUND: OFF"), W * 0.5, Y, BW, BH, EECAction::ToggleSound); Y += Step;
+			const double BW = H * 0.44, BH = H * 0.075, Step = BH * 1.28;
+			const double XL = W * 0.5 - BW * 0.54, XR = W * 0.5 + BW * 0.54;
+			double Y = H * 0.32;
+			Button(TEXT("RESUME"), XL, Y, BW, BH, EECAction::Resume, 0, true, true); Y += Step;
+			Button(TEXT("RESTART LEVEL"), XL, Y, BW, BH, EECAction::Restart); Y += Step;
+			Button(G.bHintActive ? TEXT("HINT: ON") : TEXT("SHOW ME A HINT"), XL, Y, BW, BH, EECAction::Hint, 0, !G.bHintActive); Y += Step;
+			Button(TEXT("SKIP THIS LEVEL"), XL, Y, BW, BH, EECAction::Skip, 0, G.SkipAvailable()); Y += Step;
+			Button(TEXT("LEVELS"), XL, Y, BW, BH, EECAction::Levels);
+			Y = H * 0.32;
+			Button(G.Save->bMusic ? TEXT("MUSIC: ON") : TEXT("MUSIC: OFF"), XR, Y, BW, BH, EECAction::ToggleMusic); Y += Step;
+			Button(G.Save->bSound ? TEXT("SOUND: ON") : TEXT("SOUND: OFF"), XR, Y, BW, BH, EECAction::ToggleSound); Y += Step;
 			static const TCHAR* TouchNames[] = { TEXT("TOUCH PADS: AUTO"), TEXT("TOUCH PADS: ON"), TEXT("TOUCH PADS: OFF") };
-			Button(TouchNames[(int32)G.Save->TouchMode % 3], W * 0.5, Y, BW, BH, EECAction::CycleTouch); Y += Step;
-			Button(TEXT("TITLE"), W * 0.5, Y, BW, BH, EECAction::ToTitle);
+			Button(TouchNames[(int32)G.Save->TouchMode % 3], XR, Y, BW, BH, EECAction::CycleTouch); Y += Step;
+			Button(TEXT("TITLE"), XR, Y, BW, BH, EECAction::ToTitle);
+			if (!G.SkipAvailable() && G.LevelIndex < G.NumLevels() - 1)
+			{
+				Text(TEXT("SKIP UNLOCKS IF A LEVEL KEEPS BEATING YOU"), W * 0.5, H * 0.86, H * 0.018, ECColor(Faint), 0.5, 2);
+			}
 		}
 
 		void Complete()
@@ -306,7 +369,9 @@ namespace
 				const FString Label = S == 1 ? FString::Printf(TEXT("PAR %d"), Def.ParLoops) : FString(Labels[S]);
 				Text(Label, SX, SY + H * 0.085, H * 0.022, ECColor(bGot ? Ink : Faint), 0.5, 2, true);
 			}
-			Text(FString::Printf(TEXT("SOLVED IN %d LOOP%s"), G.ResultLoops, G.ResultLoops == 1 ? TEXT("") : TEXT("S")), W * 0.5, H * 0.6, H * 0.032, ECColor(Dim), 0.5, 2);
+			Text(FString::Printf(TEXT("SOLVED IN %d LOOP%s"), G.ResultLoops, G.ResultLoops == 1 ? TEXT("") : TEXT("S")), W * 0.5, H * 0.585, H * 0.03, ECColor(Dim), 0.5, 2);
+			Text(FString::Printf(TEXT("TIME  %s"), *FECGame::FormatTime(G.ResultTime)), W * 0.5 - (G.bNewBestTime ? H * 0.07 : 0.0), H * 0.64, H * 0.03, ECColor(Ink), 0.5, 2, true);
+			if (G.bNewBestTime) { Text(TEXT("NEW BEST"), W * 0.5 + H * 0.2, H * 0.64, H * 0.022, ECColor(Accent), 0.5, 2, true); }
 
 			const bool bLast = G.LevelIndex >= G.NumLevels() - 1;
 			const double BW = H * 0.3, BH = H * 0.08;
@@ -319,7 +384,7 @@ namespace
 			}
 			else
 			{
-				Text(TEXT("END OF THE PROTOTYPE - MORE LOOPS SOON"), W * 0.5, H * 0.67, H * 0.024, ECColor(Warm), 0.5, 2);
+				Text(TEXT("YOU ESCAPED THE FACILITY - MORE LOOPS SOON"), W * 0.5, H * 0.695, H * 0.024, ECColor(Warm), 0.5, 2);
 				Button(TEXT("REPLAY"), W * 0.5 + BW * 0.56, Y, BW, BH, EECAction::Replay);
 				Button(TEXT("LEVELS"), W * 0.5 - BW * 0.56, Y, BW, BH, EECAction::Levels, 0, true, true);
 			}
@@ -381,6 +446,12 @@ namespace
 				Diamond(LX + H * 0.012, Top + H * 0.14, H * 0.014, bGot ? ECColor(0xCFFBFF) : ECColor(Faint, 0.7f));
 				Text(bGot ? TEXT("SHARD") : TEXT("SHARD ?"), LX + H * 0.034, Top + H * 0.14, H * 0.017, ECColor(bGot ? Ink : Faint), 0.0, 2);
 			}
+			{
+				// Speedrun clock for this attempt, and the time to beat.
+				Text(FECGame::FormatTime(G.RunTime), LX, Top + H * 0.182, H * 0.026, ECColor(Ink), 0.0, 1, true);
+				const float BestT = G.Save->BestTimes.IsValidIndex(G.LevelIndex) ? G.Save->BestTimes[G.LevelIndex] : 0.f;
+				if (BestT > 0) { Text(FString::Printf(TEXT("BEST %s"), *FECGame::FormatTime(BestT)), LX, Top + H * 0.213, H * 0.016, ECColor(Dim), 0.0, 1); }
+			}
 
 			if (G.Fx == EECFx::OutOfLoops) { Effects(); return; }   // the panel owns the buttons
 
@@ -395,6 +466,20 @@ namespace
 			BX -= BR * 2.9;
 			const bool bCanRewind = S.Tick >= EC::MinRewindTick && G.Fx == EECFx::None;
 			IconButton(BX, BY, BR * 1.2, EECAction::Rewind, bCanRewind);
+			if (G.HintAvailable())
+			{
+				// A lifeline once the level has beaten you a couple of times.
+				const double HX = BX - BR * 2.9;
+				if (!G.bHintActive)
+				{
+					D.Additive();
+					D.Glow(HX, BY, BR * 2.2, ECColor(Warm, 0.18f + 0.12f * (float)FMath::Sin(G.RealTime * 4.0)), ECColor(Warm, 0.0f), 20);
+					D.Translucent();
+				}
+				IconButton(HX, BY, BR, EECAction::Hint, G.bHintActive);
+				Text(TEXT("?"), HX, BY, BR * 1.2, ECColor(G.bHintActive ? Accent : Warm), 0.5, 0, true);
+				Text(G.bHintActive ? TEXT("FOLLOW THE GHOST") : TEXT("HINT"), HX, BY + BR * 1.75, H * 0.015, ECColor(Dim), 0.5, 1, true);
+			}
 			IconRewind(BX + BR * 0.05, BY, BR * 0.95, ECColor(bCanRewind ? Ink : Faint));
 			if (!Ctx.bShowTouch && G.LevelIndex == 0 && S.NumEchoes == 0)
 			{
@@ -459,6 +544,7 @@ namespace
 					const double BW = H * 0.4, BH = H * 0.08;
 					Button(TEXT("RETRY LAST LOOP"), W * 0.5, H * 0.56, BW, BH, EECAction::RetryLoop, 0, true, true);
 					Button(TEXT("RESTART LEVEL"), W * 0.5, H * 0.56 + BH * 1.3, BW, BH, EECAction::Restart);
+					Button(TEXT("SHOW ME A HINT"), W * 0.5, H * 0.56 + BH * 2.6, BW, BH, EECAction::Hint);
 				}
 				break;
 			}

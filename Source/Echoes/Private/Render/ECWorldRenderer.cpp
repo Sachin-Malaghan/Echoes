@@ -98,14 +98,18 @@ void FECWorldRenderer::DrawCharacter(FECDraw& D, const FPose& P, int32 Style, do
 	const FECEchoStyle* ES = bEcho ? &EchoStyle(Style) : nullptr;
 	const double F = P.Facing ? 1.0 : -1.0;
 
+	// Squash and stretch follow the motion: stretch with vertical speed, squash on landing.
 	double SX = 1, SY = 1;
-	if (P.Anim == EAnim::Land) { SX = 1.08; SY = 0.9; }
-	else if (P.Anim == EAnim::Jump) { SX = 0.94; SY = 1.06; }
+	if (P.Anim == EAnim::Land) { SX = 1.12; SY = 0.86; }
+	else if (P.Anim == EAnim::Jump) { const double K = FMath::Clamp(P.VY / JumpSpeed, 0.0, 1.0); SY = 1.0 + 0.13 * K; SX = 1.0 - 0.08 * K; }
+	else if (P.Anim == EAnim::Fall) { const double K = FMath::Clamp(-P.VY / MaxFall, 0.0, 1.0); SY = 1.0 + 0.11 * K; SX = 1.0 - 0.07 * K; }
 	const double Speed = FMath::Clamp(FMath::Abs(P.VX) / RunSpeed, 0.0, 1.0);
 	const bool bRun = P.Anim == EAnim::Run;
+	// Lean into the run; in the air lean with the drift.
+	const double Lean = bRun ? 0.075 * Speed : ((P.Anim == EAnim::Jump || P.Anim == EAnim::Fall) ? 0.045 * FMath::Clamp(P.VX / RunSpeed, -1.0, 1.0) * (P.Facing ? 1.0 : -1.0) : 0.0);
 	const double Ph = P.X / 1.15 * 2.0 * PI * F;   // stride phase follows distance, so Echoes animate exactly
 	const double Bob = bRun ? FMath::Abs(FMath::Sin(Ph)) * 0.035 * Speed : FMath::Sin(Time * 2.2) * 0.008;
-	auto W = [&](double U, double V) { return FVector2D(P.X + U * F * SX, P.Y + V * SY); };
+	auto W = [&](double U, double V) { return FVector2D(P.X + (U + V * Lean) * F * SX, P.Y + V * SY); };
 
 	// Limbs
 	FVector2D Foot[2], Knee[2], Hand[2], Elbow[2];
@@ -305,6 +309,13 @@ FECViewTransform FECWorldRenderer::Draw(FECDraw& D, const FECGame& G, bool bTouc
 
 	const double Time = G.RealTime;
 	UsePalette(L.Def ? L.Def->World : 1);
+	{
+		const double FrameDt = FMath::Clamp(Time - LastTime, 0.0, 0.1);
+		LastTime = Time;
+		const double K = 1.0 - FMath::Exp(-FrameDt * 3.0);
+		ParallaxX += ((G.Sim.Player.X - L.W * 0.5) - ParallaxX) * K;
+		ParallaxY += ((G.Sim.Player.Y - L.H * 0.5) - ParallaxY) * K;
+	}
 	DrawBackground(D, G, V, Time);
 
 	// Door and plate state: live, or scrubbed from the history while rewinding.
@@ -324,7 +335,12 @@ FECViewTransform FECWorldRenderer::Draw(FECDraw& D, const FECGame& G, bool bTouc
 	DrawTiles(D, G, Time);
 	DrawLasers(D, G, Time);
 	DrawShard(D, G, Time);
+	DrawMist(D, G, Time);
+	DrawHint(D, G, Time);
 	DrawActors(D, G, Time);
+	DrawParticles(D, G, false);
+	DrawLighting(D, G, V, Time);
+	DrawParticles(D, G, true);
 	DrawOverlays(D, G, Time);
 	D.Flush();
 	return V;
@@ -339,10 +355,42 @@ void FECWorldRenderer::DrawBackground(FECDraw& D, const FECGame& G, const FECVie
 	D.Translucent();
 	D.RectV(Left, Bottom, Right, Top, ECColor(BgBottom), ECColor(BgTop));
 
-	// Back wall: large glass panels with thin seams, a few dim monitors.
-	const FLinearColor Seam = ECColor(Midground, 0.35f);
-	for (int32 X = 0; X <= L.W; X += 2) { D.Line(X, 0, X, L.H, 0.03, Seam); }
-	for (int32 Y = 0; Y <= L.H; Y += 3) { D.Line(0, Y + 0.5, L.W, Y + 0.5, 0.03, Seam); }
+	// Parallax: three depths behind the play layer, each trailing the player a little less than the
+	// one behind it. (The play layer itself never moves: the level is one fixed screen.)
+	auto Depth = [&](double F) { D.Flush(); D.SetTransform(V.Scale, V.OriginX + ParallaxX * F, V.OriginY + ParallaxY * F * 0.6, true); };
+
+	// Far: the silhouette of the facility's structure - columns, cross-beams, hanging cables.
+	Depth(0.16);
+	{
+		const FLinearColor Far = ECColor(Midground, 0.22f);
+		for (int32 I = -1; I < 7; ++I)
+		{
+			const double CX0 = I * 3.1 + 0.8 + Hash(I + 900) * 0.8, CW0 = 0.35 + Hash(I + 910) * 0.5;
+			D.Rect(CX0, -2, CX0 + CW0, L.H + 2, Far);
+			D.Rect(CX0 - 0.15, L.H * (0.3 + 0.4 * Hash(I + 920)), CX0 + CW0 + 0.15, L.H * (0.3 + 0.4 * Hash(I + 920)) + 0.18, Far);
+		}
+		for (int32 I = 0; I < 3; ++I)
+		{
+			const double BY = L.H * (0.25 + 0.27 * I) + Hash(I + 930);
+			D.Rect(-3, BY, L.W + 3, BY + 0.22, ECColor(Midground, 0.16f));
+		}
+		for (int32 I = 0; I < 6; ++I)
+		{
+			// cables sagging between the columns
+			const double X0 = I * 3.1 - 1.0, X1 = X0 + 3.1, Y0 = L.H - 0.6 - Hash(I + 940);
+			FVector2D Prev(X0, Y0);
+			for (int32 S = 1; S <= 8; ++S)
+			{
+				const double T = S / 8.0;
+				const FVector2D Next(FMath::Lerp(X0, X1, T), Y0 - FMath::Sin(T * PI) * (0.6 + Hash(I + 950)));
+				D.Line(Prev.X, Prev.Y, Next.X, Next.Y, 0.04, ECColor(Midground, 0.3f));
+				Prev = Next;
+			}
+		}
+	}
+
+	// Middle: monitors (Lab) or gears and steam (Factory), and the great dial.
+	Depth(0.09);
 	for (int32 I = 0; I < 5 && GPaletteWorld == 1; ++I)
 	{
 		const double MX = 1.2 + Hash(I * 13 + 1) * (L.W - 3.5), MY = 2.2 + Hash(I * 13 + 2) * (L.H - 4.5);
@@ -393,7 +441,8 @@ void FECWorldRenderer::DrawBackground(FECDraw& D, const FECGame& G, const FECVie
 		D.Translucent();
 	}
 
-	// The facility's time machine: a huge dial, slowly turning, behind everything.
+	// The time machine of the facility: a huge dial, slowly turning.
+	Depth(0.06);
 	D.Additive();
 	const double CX = L.W * 0.5, CY = L.H * 0.55, R = L.H * 0.42;
 	D.Ring(CX, CY, R - 0.04, R, ECColor(Accent, 0.07f), ECColor(Accent, 0.07f), 72);
@@ -408,7 +457,19 @@ void FECWorldRenderer::DrawBackground(FECDraw& D, const FECGame& G, const FECVie
 	D.Arc(CX, CY, R * 0.72 + 0.1, R - 0.12, PI * 0.5, Hand, ECColor(Accent, 0.045f), 72);
 	D.Line(CX, CY, CX + FMath::Cos(Hand) * (R - 0.2), CY + FMath::Sin(Hand) * (R - 0.2), 0.05, ECColor(Accent, 0.12f));
 
-	// Ceiling lamps and their light shafts.
+	// Near: the back wall itself, glass panels with thin seams.
+	Depth(0.03);
+	D.Translucent();
+	{
+		const FLinearColor Seam = ECColor(Midground, 0.35f);
+		for (int32 X = -2; X <= L.W + 2; X += 2) { D.Line(X, -1, X, L.H + 1, 0.03, Seam); }
+		for (int32 Y = 0; Y <= L.H; Y += 3) { D.Line(-2, Y + 0.5, L.W + 2, Y + 0.5, 0.03, Seam); }
+	}
+	Depth(0.0);
+	D.Additive();
+
+	// Ceiling lamps and their light shafts (part of the play layer: they sit on the real ceiling).
+	NumLamps = 0;
 	for (int32 X = 1; X < L.W - 1; ++X)
 		for (int32 Y = L.H - 1; Y > 0; --Y)
 		{
@@ -419,6 +480,7 @@ void FECWorldRenderer::DrawBackground(FECDraw& D, const FECGame& G, const FECVie
 			const double Flicker = 0.85 + 0.15 * FMath::Sin(Time * (3.0 + X) + X);
 			Shaft(D, X + 0.5, Y, 0.3, Floor, 1.4, ECColor(Lamp, 0.075f * (float)Flicker), ECColor(Accent, 0.0f));
 			D.Glow(X + 0.5, Y - 0.05, 0.9, ECColor(Lamp, 0.25f), ECColor(Accent, 0.0f), 16);
+			if (NumLamps < MaxLamps) { Lamps[NumLamps++] = FVector(X + 0.5, Y, Floor); }
 			break;
 		}
 
@@ -819,6 +881,166 @@ void FECWorldRenderer::DrawActors(FECDraw& D, const FECGame& G, double Time)
 			D.Circle(P.X + FMath::Cos(Ang) * R, P.Y + 0.8 + FMath::Sin(Ang) * R + T * 0.8, 0.04, ECColor(PlayerCyan, (float)(1.0 - T)), 6);
 		}
 		D.Translucent();
+	}
+}
+
+// Slow mist hugging the floor and hanging in the room.
+void FECWorldRenderer::DrawMist(FECDraw& D, const FECGame& G, double Time)
+{
+	const FLevel& L = G.Sim.Level;
+	D.Additive();
+	for (int32 I = 0; I < 12; ++I)
+	{
+		const bool bLow = I < 8;
+		const double Speed = (0.12 + 0.18 * Hash(I + 400)) * (I % 2 ? 1.0 : -1.0);
+		const double Span = L.W + 8.0;
+		const double X = FMath::Fmod(Hash(I + 410) * Span + Time * Speed + Span * 100.0, Span) - 4.0;
+		const double Y = bLow ? 1.0 + Hash(I + 420) * 1.3 : 2.5 + Hash(I + 420) * (L.H - 4.0);
+		const double R = bLow ? 2.2 + Hash(I + 430) * 1.6 : 3.0 + Hash(I + 430) * 2.0;
+		const float A = (bLow ? 0.055f : 0.03f) * (0.7f + 0.3f * (float)FMath::Sin(Time * 0.4 + I));
+		D.Glow(X, Y + FMath::Sin(Time * 0.25 + I) * 0.15, R, ECColor(Lamp, A), ECColor(Lamp, 0.0f), 18);
+	}
+	D.Translucent();
+}
+
+void FECWorldRenderer::DrawParticles(FECDraw& D, const FECGame& G, bool bGlow)
+{
+	if (bGlow) { D.Additive(); } else { D.Translucent(); }
+	for (int32 I = 0; I < G.NumParticles; ++I)
+	{
+		const FECParticle& P = G.Particles[I];
+		if (P.bGlow != bGlow) { continue; }
+		const float T = FMath::Clamp(P.Life / P.MaxLife, 0.f, 1.f);
+		if (bGlow)
+		{
+			D.Circle(P.X, P.Y, P.Size * (0.5 + 0.5 * T), ECColor(P.Color, T), 6);
+			D.Glow(P.X, P.Y, P.Size * 4.0, ECColor(P.Color, 0.35f * T), ECColor(P.Color, 0.0f), 8);
+		}
+		else
+		{
+			// Dust puffs grow and thin out as they age.
+			D.Circle(P.X, P.Y, P.Size * (1.0 + 1.4 * (1.f - T)), ECColor(P.Color, 0.45f * T), 8);
+		}
+	}
+	D.Translucent();
+}
+
+// The hint: a pale ghost walks the next run of the par solution along a dotted path.
+void FECWorldRenderer::DrawHint(FECDraw& D, const FECGame& G, double Time)
+{
+	const FRecording& H = G.HintTrack;
+	if (!G.bHintActive || G.bAttract || H.Length <= 0 || G.Fx != EECFx::None || G.Sim.Phase != EPhase::Playing) { return; }
+	D.Translucent();
+	for (int32 T = 0; T < H.Length; T += 4)
+	{
+		const EC::FFrame& Fr = H.Frames[T];
+		const float A = T < G.Sim.Tick ? 0.12f : 0.4f;
+		D.Circle(Fr.X, Fr.Y + 0.8, 0.045, ECColor(0xFFFFFF, A), 6);
+	}
+	const EC::FFrame& Now = H.At(G.Sim.Tick);
+	FPose P;
+	P.X = Now.X; P.Y = Now.Y; P.VX = Now.VX; P.VY = Now.VY; P.Facing = Now.Facing; P.Anim = (EAnim)Now.Anim;
+	const bool bDone = G.Sim.Tick >= H.Length;
+	if (bDone) { P.Anim = EAnim::Idle; P.VX = P.VY = 0; }
+	DrawCharacter(D, P, 4, Time, 0.5, 0.3);
+	if (bDone && G.bHintEndsWithRewind)
+	{
+		// "Now rewind": the rewind mark pulses over the ghost's head.
+		const double S = 0.26 + 0.05 * FMath::Sin(Time * 8.0), X = P.X, Y = P.Y + 2.15;
+		const FLinearColor C = ECColor(0xFFFFFF, 0.9f);
+		D.Tri(X - S * 0.05, Y - S * 0.5, X - S * 0.05, Y + S * 0.5, X - S * 0.65, Y, C);
+		D.Tri(X + S * 0.55, Y - S * 0.5, X + S * 0.55, Y + S * 0.5, X - S * 0.05, Y, C);
+	}
+}
+
+// Darkness with light sources: a coarse mesh over the screen whose vertices are darkened by how little
+// light reaches them. Subject 7 carries the strongest light; everything that matters to the puzzle
+// (exit, plates, doors, spikes, lasers, shard, Echoes) is a light too, so nothing important hides.
+void FECWorldRenderer::DrawLighting(FECDraw& D, const FECGame& G, const FECViewTransform& V, double Time)
+{
+	const FSim& S = G.Sim;
+	const FLevel& L = S.Level;
+	struct FLight { float X, Y, R, I; };
+	FLight Lights[96];
+	int32 N = 0;
+	auto Add = [&](double X, double Y, double R, double I) { if (N < 96) { Lights[N++] = { (float)X, (float)Y, (float)R, (float)I }; } };
+
+	const double Flick = 0.96 + 0.04 * FMath::Sin(Time * 9.0);
+	if (S.Phase != EPhase::Solved || G.Fx == EECFx::Solve)
+	{
+		const double A = G.RenderAlpha();
+		Add(FMath::Lerp((double)G.PrevPX, (double)S.Player.X, A), FMath::Lerp((double)G.PrevPY, (double)S.Player.Y, A) + 0.9, 5.2, 0.95 * Flick);
+	}
+	for (int32 I = 0; I < S.NumEchoes; ++I) { Add(S.EchoState[I].X, S.EchoState[I].Y + 0.8, 2.9, 0.55); }
+	Add(L.Exit.X, L.Exit.Y + 1.0, G.Fx == EECFx::Solve ? 4.0 + 14.0 * G.FxProgress() : 4.0, 0.8);
+	if (L.HasShard && !S.ShardTaken()) { Add(L.Shard.X, L.Shard.Y, 2.2, 0.55); }
+	for (int32 I = 0; I < NumLamps; ++I)
+	{
+		Add(Lamps[I].X, Lamps[I].Y - 0.6, 3.0, 0.5);
+		Add(Lamps[I].X, (Lamps[I].Y + Lamps[I].Z) * 0.5, 2.8, 0.3);
+		Add(Lamps[I].X, Lamps[I].Z + 0.5, 2.6, 0.38);
+	}
+	for (int32 I = 0; I < L.NumPlates; ++I) { Add((L.Plates[I].X0 + L.Plates[I].X1) * 0.5, L.Plates[I].Y + 0.3, 1.9, S.PlatePressed[I] ? 0.6 : 0.38); }
+	for (int32 I = 0; I < L.NumDoors; ++I) { Add((L.Doors[I].X0 + L.Doors[I].X1) * 0.5, (L.Doors[I].Y0 + L.Doors[I].Y1) * 0.5, 2.2, 0.4); }
+	for (int32 I = 0; I < L.NumEmitters; ++I)
+	{
+		const EC::FBox B = S.BeamBox(I);
+		Add(L.Emitters[I].X + 0.5, L.Emitters[I].Y + 0.5, 1.8, 0.4);
+		const double Len = FMath::Max(B.R - B.L, B.T - B.B);
+		const bool bHorizontal = L.Emitters[I].DY == 0;
+		const double Power = S.LaserOn() ? 0.5 : 0.16;
+		for (double T = 0.5; T < Len; T += 1.4)
+		{
+			if (bHorizontal) { Add(B.L + T, (B.B + B.T) * 0.5, 1.9, Power); } else { Add((B.L + B.R) * 0.5, B.B + T, 1.9, Power); }
+		}
+	}
+	for (int32 Y = 0; Y < L.H; ++Y)
+		for (int32 X = 0; X < L.W; ++X)
+			if (L.TileAt(X, Y) == ETile::Spike && (X % 2) == 0) { Add(X + 1.0, Y + 0.4, 1.9, 0.36); }
+	if (G.bHintActive && G.HintTrack.Length > 0)
+	{
+		const EC::FFrame& Fr = G.HintTrack.At(S.Tick);
+		Add(Fr.X, Fr.Y + 0.8, 2.4, 0.4);
+	}
+
+	// Menus sit over a brighter room; the level itself is the darkest.
+	const double Ambient = G.Screen == EECScreen::Playing && !G.bAttract ? 0.30 : 0.42;
+	const double MaxDark = 0.80;
+	const FLinearColor Shadow = ECColor(0x02040A);
+	const double Step = 0.5;
+	const double Left = V.OriginX, Top = V.OriginY;
+	const int32 NX = FMath::Min(95, FMath::CeilToInt(D.ScreenW / V.Scale / Step) + 1);
+	const int32 NY = FMath::Min(63, FMath::CeilToInt(D.ScreenH / V.Scale / Step) + 1);
+	static float Row[2][96];
+	auto DarkAt = [&](double X, double Y)
+	{
+		double Light = Ambient;
+		for (int32 I = 0; I < N; ++I)
+		{
+			const double DX = X - Lights[I].X, DY = Y - Lights[I].Y;
+			const double D2 = DX * DX + DY * DY, R = Lights[I].R;
+			if (D2 >= R * R) { continue; }
+			const double K = 1.0 - FMath::Sqrt(D2) / R;
+			Light += Lights[I].I * K * K * (3.0 - 2.0 * K);
+		}
+		return (float)(MaxDark * (1.0 - FMath::Clamp(Light, 0.0, 1.0)));
+	};
+	D.Translucent();
+	for (int32 IX = 0; IX <= NX; ++IX) { Row[0][IX] = DarkAt(Left + IX * Step, Top); }
+	for (int32 IY = 0; IY < NY; ++IY)
+	{
+		const float* A = Row[IY & 1];
+		float* B = Row[(IY + 1) & 1];
+		const double Y0 = Top - IY * Step, Y1 = Y0 - Step;
+		for (int32 IX = 0; IX <= NX; ++IX) { B[IX] = DarkAt(Left + IX * Step, Y1); }
+		for (int32 IX = 0; IX < NX; ++IX)
+		{
+			if (A[IX] + A[IX + 1] + B[IX] + B[IX + 1] < 0.01f) { continue; }
+			const double X0 = Left + IX * Step, X1 = X0 + Step;
+			const FLinearColor C00 = ECAlpha(Shadow, A[IX]), C10 = ECAlpha(Shadow, A[IX + 1]), C01 = ECAlpha(Shadow, B[IX]), C11 = ECAlpha(Shadow, B[IX + 1]);
+			D.TriColors(FVector2D(X0, Y0), FVector2D(X1, Y0), FVector2D(X1, Y1), C00, C10, C11);
+			D.TriColors(FVector2D(X0, Y0), FVector2D(X1, Y1), FVector2D(X0, Y1), C00, C11, C01);
+		}
 	}
 }
 
